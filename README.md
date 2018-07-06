@@ -1,4 +1,4 @@
-# embedded-ftp-server
+# Little FTPD (lftpd)
 
 A tiny embeddable ftp server written in C for small embedded targets.
 Supports only the minimum neccessary to move files to and from your

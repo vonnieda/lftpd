@@ -1,4 +1,6 @@
-embedded-ftp-server: embedded-ftp-server.o efs_inet.o efs_string.o efs_log.o
+all: lftpd
+
+lftpd: lftpd.o lftpd_inet.o lftpd_string.o lftpd_log.o
 
 clean:
 	rm -f *.o

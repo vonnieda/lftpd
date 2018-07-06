@@ -1,10 +1,11 @@
+#include "private/lftpd_log.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "private/efs_log.h"
 
-void efs_log_internal(const char* level, const char* format, ...) {
+void lftpd_log_internal(const char* level, const char* format, ...) {
 	char buffer[256];
 	va_list args;
 	va_start(args, format);
