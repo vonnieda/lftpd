@@ -27,7 +27,7 @@
 // https://en.wikipedia.org/wiki/List_of_FTP_commands
 
 typedef struct {
-	const char* directory;
+	char* directory;
 	int socket;
 	int data_socket;
 } client_t;
@@ -74,19 +74,26 @@ static command_t commands[] = {
 	{ NULL, NULL },
 };
 
-static char* path_combine(const char* left, const char* right) {
-	if (left == NULL) {
-		left = "";
+static char* path_resolve(const char* base, const char* name) {
+	if (base == NULL) {
+		base = "";
 	}
-	if (right == NULL) {
-		right = "";
+	if (name == NULL) {
+		name = "";
 	}
-	char* path = NULL;
-	int err = asprintf(&path, "%s/%s", left, right);
-	if (err < 0) {
-		return NULL;
+	if (name[0] == '/') {
+		return realpath(name, NULL);
 	}
-	return path;
+	else {
+		char* path = NULL;
+		int err = asprintf(&path, "%s/%s", base, name);
+		if (err < 0) {
+			return NULL;
+		}
+		char* abs_path = realpath(path, NULL);
+		free(path);
+		return abs_path;
+	}
 }
 
 /**
@@ -195,7 +202,7 @@ static int send_directory_listing(int socket, const char* path) {
 
 	struct dirent *entry;
 	while ((entry = readdir(dp))) {
-		char* file_path = path_combine(path, entry->d_name);
+		char* file_path = path_resolve(path, entry->d_name);
 		struct stat st;
 		if (stat(file_path, &st) == 0) {
 			if (S_ISDIR(st.st_mode)) {
@@ -240,13 +247,36 @@ static int send_file(int socket, const char* path) {
 	return 0;
 }
 
-static int cmd_cwd(client_t* client, const char* arg) {
-	if (arg && strcmp("/", arg) == 0) {
-		send_simple_response(client->socket, 250, STATUS_250);
+static int receive_file(int socket, const char* path) {
+	FILE* file = fopen(path, "wb");
+	if (file == NULL) {
+		lftpd_log_error("failed to open file for write");
+		return -1;
 	}
-	else {
+	unsigned char buffer[1024];
+	int read_len;
+	while ((read_len = read(socket, buffer, 1024)) > 0) {
+		// TODO error check
+		fwrite(buffer, read_len, 1, file);
+	}
+
+	fclose(file);
+
+	if (read_len < 0) {
+		return read_len;
+	}
+
+	return 0;
+}
+
+static int cmd_cwd(client_t* client, const char* arg) {
+	if (arg == NULL || strlen(arg) == 0) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
+	// TODO check if the new path exists before setting it, and return
+	// error if not.
+	client->directory = path_resolve(client->directory, arg);
+	send_simple_response(client->socket, 250, STATUS_250);
 	return 0;
 }
 
@@ -363,7 +393,7 @@ static int cmd_pasv(client_t* client, const char* arg) {
 }
 
 static int cmd_pwd(client_t* client, const char* arg) {
-	send_simple_response(client->socket, 257, "/");
+	send_simple_response(client->socket, 257, "\"%s\"", client->directory);
 	return 0;
 }
 
@@ -379,7 +409,7 @@ static int cmd_retr(client_t* client, const char* arg) {
 	}
 
 	send_simple_response(client->socket, 150, STATUS_150);
-	char* path = path_combine(client->directory, arg);
+	char* path = path_resolve(client->directory, arg);
 	lftpd_log_debug("send '%s'", path);
 	int err = send_file(client->data_socket, path);
 	free(path);
@@ -400,7 +430,7 @@ static int cmd_size(client_t* client, const char* arg) {
 		return 0;
 	}
 
-	char* path = path_combine(client->directory, arg);
+	char* path = path_resolve(client->directory, arg);
 	lftpd_log_debug("size %s", path);
 	struct stat st;
 	if (stat(path, &st) == 0) {
@@ -413,14 +443,26 @@ static int cmd_size(client_t* client, const char* arg) {
 	return 0;
 }
 
-//STOR
-//125, 150
-//  (110)
-//  226, 250
-//  425, 426, 451, 551, 552
-//532, 450, 452, 553
-//500, 501, 421, 530
 static int cmd_stor(client_t* client, const char* arg) {
+	if (client->data_socket == -1) {
+		send_simple_response(client->socket, 425, STATUS_425);
+		return -1;
+	}
+
+	lftpd_log_info("arg %s", arg);
+	send_simple_response(client->socket, 150, STATUS_150);
+	char* path = path_resolve(client->directory, arg);
+	lftpd_log_debug("receive '%s'", path);
+	int err = receive_file(client->data_socket, path);
+	free(path);
+	close(client->data_socket);
+	client->data_socket = -1;
+	if (err == 0) {
+		send_simple_response(client->socket, 226, STATUS_226);
+	}
+	else {
+		send_simple_response(client->socket, 450, STATUS_450);
+	}
 	return 0;
 }
 
@@ -553,11 +595,12 @@ int lftpd_start(const char* directory, int port) {
 		}
 
 		client_t client = {
-				.directory = directory,
+				.directory = strdup(directory),
 				.socket = client_socket,
 				.data_socket = -1,
 		};
 		handle_control_channel(&client);
+		free(client.directory);
 	}
 
 	return 0;

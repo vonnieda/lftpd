@@ -12,13 +12,13 @@ device with common FTP clients.
 * Works out of the box on POSIX like targets.
 * No external dependencies.
 * Clear C99 code without anything fancy. Easy to understand and modify.
-
+* Doesn't modify current working directory.
+* Very limited dynamic allocation - easy to remove if needed.
 
 # Limitations
 
 * One connection at a time.
 * No active mode support - PASV and EPSV only.
-* Single directory currently - CWD planned.
 
 
 # Build
