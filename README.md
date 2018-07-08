@@ -4,6 +4,10 @@ A tiny embeddable ftp server written in C for small embedded targets.
 Supports only the minimum neccessary to move files to and from your
 device with common FTP clients.
 
+This ftpd is designed to make it easy to get files to and from an
+embedded device during development and debugging. It is not intended
+to ship on production firmware. It has no means of authentication
+and is not written with high security in mind.
 
 # Features
 
@@ -19,7 +23,9 @@ device with common FTP clients.
 
 * One connection at a time.
 * No active mode support - PASV and EPSV only.
-
+* No file timestamps.
+* No file permissions.
+* No authentication.
 
 # Build
 

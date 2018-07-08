@@ -74,34 +74,83 @@ static command_t commands[] = {
 	{ NULL, NULL },
 };
 
-static char* path_resolve(const char* base, const char* name) {
+/**
+ * @brief Given a base path and a name, attempts to combine base and
+ * name and produce an absolute path. If either base or name are NULL
+ * they are treated as empty strings.
+ * The following rules are then applied:
+ * 1. If name does not begin with / it is appended to base with
+ *    / as a separator. In other words, name is treated as relative
+ *    to base and the two are combined.
+ * 2. The path is then broken into segments by splitting on /.
+ * 3. Path segments of . are removed entirely.
+ * 4. Path segments of .. are resolved by removing the parent segment.
+ * 5. The segments are then joined with / and the result is returned.
+ */
+static char* canonicalize_path(const char* base, const char* name) {
+	// if either argument is null, treat it as empty
 	if (base == NULL) {
 		base = "";
 	}
 	if (name == NULL) {
 		name = "";
 	}
+
+	// if name is absolute, ignore the base and use name as the
+	// full path
+	char* path = NULL;
 	if (name[0] == '/') {
-		return realpath(name, NULL);
+		path = strdup(name);
 	}
+	// otherwise append name to base with / as a separator
 	else {
-		char* path = NULL;
 		int err = asprintf(&path, "%s/%s", base, name);
 		if (err < 0) {
 			return NULL;
 		}
-		char* abs_path = realpath(path, NULL);
-		free(path);
-		return abs_path;
 	}
+
+	// allocate enough room for the absolute path, which can never be
+	// longer than the path, plus 1 for a / and 1 for the terminator
+	size_t abs_path_len = strlen(path) + 1 + 1;
+	char* abs_path = malloc(abs_path_len);
+	memset(abs_path, 0, abs_path_len);
+
+	// run through the path a segment at a time, adding each to
+	// abs_path with with a preceding / and resolving . and ..
+	char* save_pointer = NULL;
+	char* token = strtok_r(path, "/", &save_pointer);
+	while (token) {
+		if (strcmp(token, ".") == 0) {
+			// ignore it
+		}
+		else if (strcmp(token, "..") == 0) {
+			// go back one element
+			char* p = strrchr(abs_path, '/');
+			if (p != NULL) {
+				p[0] = '\0';
+			}
+		}
+		else {
+			strcat(abs_path, "/");
+			strcat(abs_path, token);
+		}
+
+		token = strtok_r(NULL, "/", &save_pointer);
+	}
+	free(path);
+
+	// a path like /test/.. might have removed everything and left
+	// an empty path, so detect that condition and fix it
+	if (strlen(abs_path) == 0) {
+		strcpy(abs_path, "/");
+	}
+
+	return abs_path;
 }
 
-/**
- * @brief Write a simple response of the form NNN ssss...\r\n to the client.
- * For example, write_simple_response(client, 220, "Welcome") will write
- * "220 Welcome\r\n" to the client.
- */
-static int send_simple_response(int socket, int code, const char* format, ...) {
+static int send_response(int socket, int code, bool include_code,
+		bool multiline_start, const char* format, ...) {
 	va_list args;
 	va_start(args, format);
 	char* message = NULL;
@@ -112,7 +161,17 @@ static int send_simple_response(int socket, int code, const char* format, ...) {
 	}
 
 	char* response = NULL;
-	err = asprintf(&response, "%d %s%s", code, message, CRLF);
+	if (include_code) {
+		if (multiline_start) {
+			err = asprintf(&response, "%d-%s%s", code, message, CRLF);
+		}
+		else {
+			err = asprintf(&response, "%d %s%s", code, message, CRLF);
+		}
+	}
+	else {
+		err = asprintf(&response, "%s%s", message, CRLF);
+	}
 	free(message);
 	if (err < 0) {
 		return -1;
@@ -123,71 +182,13 @@ static int send_simple_response(int socket, int code, const char* format, ...) {
 	return err;
 }
 
-static int send_multiline_response_begin(int socket, int code, const char* format, ...) {
-	va_list args;
-	va_start(args, format);
-	char* message = NULL;
-	int err = vasprintf(&message, format, args);
-	va_end(args);
-	if (err < 0) {
-		return -1;
-	}
+#define send_simple_response(socket, code, format, ...) send_response(socket, code, true, false, format, ##__VA_ARGS__)
 
-	char* response = NULL;
-	err = asprintf(&response, "%d-%s%s", code, message, CRLF);
-	free(message);
-	if (err < 0) {
-		return -1;
-	}
+#define send_multiline_response_begin(socket, code, format, ...) send_response(socket, code, true, true, format, ##__VA_ARGS__)
 
-	err = lftpd_inet_write_string(socket, response);
-	free(response);
-	return err;
-}
+#define send_multiline_response_line(socket, format, ...) send_response(socket, 0, false, false, format, ##__VA_ARGS__)
 
-static int send_multiline_response_line(int socket, const char* format, ...) {
-	va_list args;
-	va_start(args, format);
-	char* message = NULL;
-	int err = vasprintf(&message, format, args);
-	va_end(args);
-	if (err < 0) {
-		return -1;
-	}
-
-	char* response = NULL;
-	err = asprintf(&response, "%s%s", message, CRLF);
-	free(message);
-	if (err < 0) {
-		return -1;
-	}
-
-	err = lftpd_inet_write_string(socket, response);
-	free(response);
-	return err;
-}
-
-static int send_multiline_response_end(int socket, int code, const char* format, ...) {
-	va_list args;
-	va_start(args, format);
-	char* message = NULL;
-	int err = vasprintf(&message, format, args);
-	va_end(args);
-	if (err < 0) {
-		return -1;
-	}
-
-	char* response = NULL;
-	err = asprintf(&response, "%d %s%s", code, message, CRLF);
-	free(message);
-	if (err < 0) {
-		return -1;
-	}
-
-	err = lftpd_inet_write_string(socket, response);
-	free(response);
-	return err;
-}
+#define send_multiline_response_end(socket, code, format, ...) send_response(socket, code, true, false, format, ##__VA_ARGS__)
 
 static int send_directory_listing(int socket, const char* path) {
 	// https://files.stairways.com/other/ftp-list-specs-info.txt
@@ -202,7 +203,7 @@ static int send_directory_listing(int socket, const char* path) {
 
 	struct dirent *entry;
 	while ((entry = readdir(dp))) {
-		char* file_path = path_resolve(path, entry->d_name);
+		char* file_path = canonicalize_path(path, entry->d_name);
 		struct stat st;
 		if (stat(file_path, &st) == 0) {
 			if (S_ISDIR(st.st_mode)) {
@@ -253,17 +254,20 @@ static int receive_file(int socket, const char* path) {
 		lftpd_log_error("failed to open file for write");
 		return -1;
 	}
+
 	unsigned char buffer[1024];
-	int read_len;
-	while ((read_len = read(socket, buffer, 1024)) > 0) {
-		// TODO error check
-		fwrite(buffer, read_len, 1, file);
+	int err;
+	while ((err = read(socket, buffer, 1024)) > 0) {
+		if (fwrite(buffer, err, 1, file) != 1) {
+			err = -1;
+			break;
+		}
 	}
 
 	fclose(file);
 
-	if (read_len < 0) {
-		return read_len;
+	if (err < 0) {
+		return err;
 	}
 
 	return 0;
@@ -273,10 +277,28 @@ static int cmd_cwd(client_t* client, const char* arg) {
 	if (arg == NULL || strlen(arg) == 0) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
-	// TODO check if the new path exists before setting it, and return
-	// error if not.
-	client->directory = path_resolve(client->directory, arg);
+
+	char* path = canonicalize_path(client->directory, arg);
+
+	// make sure the path exists
+	struct stat st;
+	if (stat(path, &st) != 0) {
+		send_simple_response(client->socket, 550, STATUS_550);
+		free(path);
+		return -1;
+	}
+
+	// make sure the path is a directory
+	if (!S_ISDIR(st.st_mode)) {
+		send_simple_response(client->socket, 550, STATUS_550);
+		free(path);
+		return -1;
+	}
+
+	free(client->directory);
+	client->directory = path;
 	send_simple_response(client->socket, 250, STATUS_250);
+
 	return 0;
 }
 
@@ -389,7 +411,6 @@ static int cmd_pasv(client_t* client, const char* arg) {
 	client->data_socket = client_socket;
 
 	return 0;
-	return 0;
 }
 
 static int cmd_pwd(client_t* client, const char* arg) {
@@ -409,7 +430,7 @@ static int cmd_retr(client_t* client, const char* arg) {
 	}
 
 	send_simple_response(client->socket, 150, STATUS_150);
-	char* path = path_resolve(client->directory, arg);
+	char* path = canonicalize_path(client->directory, arg);
 	lftpd_log_debug("send '%s'", path);
 	int err = send_file(client->data_socket, path);
 	free(path);
@@ -430,7 +451,7 @@ static int cmd_size(client_t* client, const char* arg) {
 		return 0;
 	}
 
-	char* path = path_resolve(client->directory, arg);
+	char* path = canonicalize_path(client->directory, arg);
 	lftpd_log_debug("size %s", path);
 	struct stat st;
 	if (stat(path, &st) == 0) {
@@ -451,7 +472,7 @@ static int cmd_stor(client_t* client, const char* arg) {
 
 	lftpd_log_info("arg %s", arg);
 	send_simple_response(client->socket, 150, STATUS_150);
-	char* path = path_resolve(client->directory, arg);
+	char* path = canonicalize_path(client->directory, arg);
 	lftpd_log_debug("receive '%s'", path);
 	int err = receive_file(client->data_socket, path);
 	free(path);
@@ -606,7 +627,21 @@ int lftpd_start(const char* directory, int port) {
 	return 0;
 }
 
+//#define TESTIT(base, name, expected) printf("canonicalize_path(%s, %s) -> %s = %s\n", base, name, canonicalize_path(base, name), strcmp(canonicalize_path(base, name), expected) == 0 ? "PASS" : "FAIL")
+
 int main( int argc, char *argv[] ) {
+//	TESTIT("/", "name", "/name");
+//	TESTIT("/base", "name", "/base/name");
+//	TESTIT("/base/", "/name", "/name");
+//	TESTIT("/base//", "/name/", "/name");
+//	TESTIT("/base", ".", "/base");
+//	TESTIT("/base/", "..", "/");
+//	TESTIT("/base/base1/base2", "..", "/base/base1");
+//	TESTIT("/base/base1/", "name/name2/..", "/base/base1/name");
+//	TESTIT("/one/./two/../three/four//five/.././././..", "name", "/one/three/name");
+//	TESTIT("/", "/", "/");
+
+
 	char* cwd = getcwd(NULL, 0);
 	lftpd_start(cwd, 2121);
 	free(cwd);
