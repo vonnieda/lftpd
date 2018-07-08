@@ -11,4 +11,4 @@ int lftpd_inet_get_socket_port(int socket);
  */
 int lftpd_inet_read_line(int socket, char* buffer, size_t buffer_len);
 
-int lftpd_inet_writef(int socket, char* buffer, size_t buffer_len, char* format, ...);
+int lftpd_inet_write_string(int socket, const char* message);

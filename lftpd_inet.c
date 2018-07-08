@@ -79,24 +79,16 @@ int lftpd_inet_read_line(int socket, char* buffer, size_t buffer_len) {
 		if (p) {
 			// null terminate the line and return
 			*p = '\0';
-			lftpd_log_info("< '%s'", buffer);
+			lftpd_log_debug("< '%s'", buffer);
 			return 0;
 		}
 	}
 	return -1;
 }
 
-int lftpd_inet_writef(int socket, char* buffer, size_t buffer_len, char* format, ...) {
-	va_list args;
-	va_start(args, format);
-	int err = vsnprintf(buffer, buffer_len, format, args);
-	va_end(args);
-	if (err >= buffer_len) {
-		return -1;
-	}
-
-	char* p = buffer;
-	int length = strlen(buffer);
+int lftpd_inet_write_string(int socket, const char* message) {
+	char* p = (char*) message;
+	int length = strlen(message);
 	while (length) {
 		int write_len = write(socket, p, length);
 		if (write_len < 0) {
@@ -106,6 +98,6 @@ int lftpd_inet_writef(int socket, char* buffer, size_t buffer_len, char* format,
 		p += write_len;
 		length -= write_len;
 	}
-	lftpd_log_info("> %s", buffer);
+	lftpd_log_debug("> %s", message);
 	return 0;
 }
