@@ -387,6 +387,7 @@ static int cmd_epsv(client_t* client, const char* arg) {
 	int client_socket = accept(listener_socket, NULL, NULL);
 	if (client_socket < 0) {
 		lftpd_log_error("error accepting client socket");
+		close(listener_socket);
 		return -1;
 	}
 	lftpd_log_debug("data port connection received...");
@@ -468,10 +469,25 @@ static int cmd_pasv(client_t* client, const char* arg) {
 	// get the port from the new socket, which is random
 	int port = lftpd_inet_get_socket_port(listener_socket);
 
+	// get our IP by reading our side of the client's control channel
+	// socket connection
+	struct sockaddr_in client_addr;
+	socklen_t client_addr_len = sizeof(struct sockaddr_in);
+	int err = getsockname(client->socket, (struct sockaddr*) &client_addr, &client_addr_len);
+	if (err != 0) {
+		lftpd_log_error("error getting client IP info");
+		send_simple_response(client->socket, 425, STATUS_425);
+		close(listener_socket);
+		return -1;
+	}
+
 	// format the response
-	// TODO figure out what to return for the IP in the case of IPv6.
+	in_addr_t ip = htonl(client_addr.sin_addr.s_addr);
 	send_simple_response(client->socket, 227, STATUS_227,
-			0, 0, 0, 0,
+			(ip >> 24) & 0xff,
+			(ip >> 16) & 0xff,
+			(ip >> 8) & 0xff,
+			(ip >> 0) & 0xff,
 			(port >> 8) & 0xff, (port >> 0) & 0xff);
 
 	// wait for the connection to the data port
@@ -479,6 +495,7 @@ static int cmd_pasv(client_t* client, const char* arg) {
 	int client_socket = accept(listener_socket, NULL, NULL);
 	if (client_socket < 0) {
 		lftpd_log_error("error accepting client socket");
+		close(listener_socket);
 		return -1;
 	}
 	lftpd_log_debug("data port connection received...");
@@ -667,7 +684,7 @@ int lftpd_start(const char* directory, int port) {
 		char ip[INET6_ADDRSTRLEN];
 		inet_ntop(AF_INET6, &server_addr.sin6_addr, ip, INET6_ADDRSTRLEN);
 		int port = lftpd_inet_get_socket_port(server_socket);
-		lftpd_log_info("listening on %s:%d...", ip, port);
+		lftpd_log_info("listening on [%s]:%d...", ip, port);
 	}
 
 	while (true) {
@@ -681,7 +698,7 @@ int lftpd_start(const char* directory, int port) {
 
 		struct sockaddr_in6 client_addr;
 		socklen_t client_addr_len = sizeof(struct sockaddr_in6);
-		int err = getsockname(client_socket, (struct sockaddr*) &client_addr, &client_addr_len);
+		int err = getpeername(client_socket, (struct sockaddr*) &client_addr, &client_addr_len);
 		if (err != 0) {
 			lftpd_log_error("error getting client IP info");
 			lftpd_log_info("connection received...");
@@ -690,7 +707,7 @@ int lftpd_start(const char* directory, int port) {
 			char ip[INET6_ADDRSTRLEN];
 			inet_ntop(AF_INET6, &client_addr.sin6_addr, ip, INET6_ADDRSTRLEN);
 			int port = lftpd_inet_get_socket_port(client_socket);
-			lftpd_log_info("connection received from %s:%d...", ip, port);
+			lftpd_log_info("connection received from [%s]:%d...", ip, port);
 		}
 
 		client_t client = {
