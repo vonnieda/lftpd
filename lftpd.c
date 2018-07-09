@@ -42,6 +42,7 @@ static int cmd_dele();
 static int cmd_epsv();
 static int cmd_feat();
 static int cmd_list();
+static int cmd_nlst();
 static int cmd_noop();
 static int cmd_pass();
 static int cmd_pasv();
@@ -60,6 +61,7 @@ static command_t commands[] = {
 	{ "EPSV", cmd_epsv },
 	{ "FEAT", cmd_feat },
 	{ "LIST", cmd_list },
+	{ "NLST", cmd_nlst },
 	{ "NOOP", cmd_noop },
 	{ "PASS", cmd_pass },
 	{ "PASV", cmd_pasv },
@@ -201,7 +203,7 @@ static int send_response(int socket, int code, bool include_code,
 
 #define send_multiline_response_end(socket, code, format, ...) send_response(socket, code, true, false, format, ##__VA_ARGS__)
 
-static int send_directory_listing(int socket, const char* path) {
+static int send_list(int socket, const char* path) {
 	// https://files.stairways.com/other/ftp-list-specs-info.txt
 	// http://cr.yp.to/ftp/list/binls.html
 	static const char* directory_format = "drw-rw-rw- 1 owner group %13llu Jan 01  1970 %s";
@@ -223,6 +225,29 @@ static int send_directory_listing(int socket, const char* path) {
 			}
 			else if (S_ISREG(st.st_mode)) {
 				send_multiline_response_line(socket, file_format, size, entry->d_name);
+			}
+		}
+		free(file_path);
+	}
+
+	closedir(dp);
+
+	return 0;
+}
+
+static int send_nlst(int socket, const char* path) {
+	DIR* dp = opendir(path);
+	if (dp == NULL) {
+		return -1;
+	}
+
+	struct dirent *entry;
+	while ((entry = readdir(dp))) {
+		char* file_path = canonicalize_path(path, entry->d_name);
+		struct stat st;
+		if (stat(file_path, &st) == 0) {
+			if (S_ISREG(st.st_mode)) {
+				send_multiline_response_line(socket, entry->d_name);
 			}
 		}
 		free(file_path);
@@ -314,11 +339,32 @@ static int cmd_cwd(client_t* client, const char* arg) {
 	return 0;
 }
 
-//DELE
-//250
-//450, 550
-//500, 501, 502, 421, 530
 static int cmd_dele(client_t* client, const char* arg) {
+	if (arg == NULL || strlen(arg) == 0) {
+		send_simple_response(client->socket, 550, STATUS_550);
+	}
+
+	char* path = canonicalize_path(client->directory, arg);
+
+	// make sure the path exists
+	struct stat st;
+	if (stat(path, &st) != 0) {
+		send_simple_response(client->socket, 550, STATUS_550);
+		free(path);
+		return -1;
+	}
+
+	// make sure the path is a file
+	if (!S_ISREG(st.st_mode)) {
+		send_simple_response(client->socket, 550, STATUS_550);
+		free(path);
+		return -1;
+	}
+
+	remove(path);
+	free(path);
+	send_simple_response(client->socket, 250, STATUS_250);
+
 	return 0;
 }
 
@@ -358,6 +404,7 @@ static int cmd_feat(client_t* client, const char* arg) {
 	send_multiline_response_line(client->socket, "EPSV");
 	send_multiline_response_line(client->socket, "PASV");
 	send_multiline_response_line(client->socket, "SIZE");
+	send_multiline_response_line(client->socket, "NLST");
 	send_multiline_response_end(client->socket, 211, STATUS_211);
 	return 0;
 }
@@ -369,7 +416,26 @@ static int cmd_list(client_t* client, const char* arg) {
 	}
 
 	send_simple_response(client->socket, 150, STATUS_150);
-	int err = send_directory_listing(client->data_socket, client->directory);
+	int err = send_list(client->data_socket, client->directory);
+	close(client->data_socket);
+	client->data_socket = -1;
+	if (err == 0) {
+		send_simple_response(client->socket, 226, STATUS_226);
+	}
+	else {
+		send_simple_response(client->socket, 550, STATUS_550);
+	}
+	return 0;
+}
+
+static int cmd_nlst(client_t* client, const char* arg) {
+	if (client->data_socket == -1) {
+		send_simple_response(client->socket, 425, STATUS_425);
+		return -1;
+	}
+
+	send_simple_response(client->socket, 150, STATUS_150);
+	int err = send_nlst(client->data_socket, client->directory);
 	close(client->data_socket);
 	client->data_socket = -1;
 	if (err == 0) {
