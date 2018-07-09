@@ -591,15 +591,15 @@ int lftpd_start(const char* directory, int port) {
 		return -1;
 	}
 
-	struct sockaddr_in6 client_addr;
-	socklen_t client_addr_len = sizeof(struct sockaddr_in6);
-	int err = getsockname(server_socket, (struct sockaddr*) &client_addr, &client_addr_len);
+	struct sockaddr_in6 server_addr;
+	socklen_t server_addr_len = sizeof(struct sockaddr_in6);
+	int err = getsockname(server_socket, (struct sockaddr*) &server_addr, &server_addr_len);
 	if (err != 0) {
 		lftpd_log_error("error getting server IP info");
 	}
 	else {
 		char ip[INET6_ADDRSTRLEN];
-		inet_ntop(AF_INET6, &client_addr.sin6_addr, ip, INET6_ADDRSTRLEN);
+		inet_ntop(AF_INET6, &server_addr.sin6_addr, ip, INET6_ADDRSTRLEN);
 		int port = lftpd_inet_get_socket_port(server_socket);
 		lftpd_log_info("listening on %s:%d...", ip, port);
 	}
