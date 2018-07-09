@@ -87,6 +87,17 @@ static command_t commands[] = {
  * 4. Path segments of .. are resolved by removing the parent segment.
  * 5. The segments are then joined with / and the result is returned.
  */
+// #define TESTIT(base, name, expected) printf("canonicalize_path(%s, %s) -> %s = %s\n", base, name, canonicalize_path(base, name), strcmp(canonicalize_path(base, name), expected) == 0 ? "PASS" : "FAIL")
+//	TESTIT("/", "name", "/name");
+//	TESTIT("/base", "name", "/base/name");
+//	TESTIT("/base/", "/name", "/name");
+//	TESTIT("/base//", "/name/", "/name");
+//	TESTIT("/base", ".", "/base");
+//	TESTIT("/base/", "..", "/");
+//	TESTIT("/base/base1/base2", "..", "/base/base1");
+//	TESTIT("/base/base1/", "name/name2/..", "/base/base1/name");
+//	TESTIT("/one/./two/../three/four//five/.././././..", "name", "/one/three/name");
+//	TESTIT("/", "/", "/");
 static char* canonicalize_path(const char* base, const char* name) {
 	// if either argument is null, treat it as empty
 	if (base == NULL) {
@@ -628,21 +639,7 @@ int lftpd_start(const char* directory, int port) {
 	return 0;
 }
 
-//#define TESTIT(base, name, expected) printf("canonicalize_path(%s, %s) -> %s = %s\n", base, name, canonicalize_path(base, name), strcmp(canonicalize_path(base, name), expected) == 0 ? "PASS" : "FAIL")
-
 int main( int argc, char *argv[] ) {
-//	TESTIT("/", "name", "/name");
-//	TESTIT("/base", "name", "/base/name");
-//	TESTIT("/base/", "/name", "/name");
-//	TESTIT("/base//", "/name/", "/name");
-//	TESTIT("/base", ".", "/base");
-//	TESTIT("/base/", "..", "/");
-//	TESTIT("/base/base1/base2", "..", "/base/base1");
-//	TESTIT("/base/base1/", "name/name2/..", "/base/base1/name");
-//	TESTIT("/one/./two/../three/four//five/.././././..", "name", "/one/three/name");
-//	TESTIT("/", "/", "/");
-
-
 	char* cwd = getcwd(NULL, 0);
 	lftpd_start(cwd, 2121);
 	free(cwd);
