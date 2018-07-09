@@ -206,11 +206,12 @@ static int send_directory_listing(int socket, const char* path) {
 		char* file_path = canonicalize_path(path, entry->d_name);
 		struct stat st;
 		if (stat(file_path, &st) == 0) {
+			unsigned long long size = st.st_size;
 			if (S_ISDIR(st.st_mode)) {
-				send_multiline_response_line(socket, directory_format, st.st_size, entry->d_name);
+				send_multiline_response_line(socket, directory_format, size, entry->d_name);
 			}
 			else if (S_ISREG(st.st_mode)) {
-				send_multiline_response_line(socket, file_format, st.st_size, entry->d_name);
+				send_multiline_response_line(socket, file_format, size, entry->d_name);
 			}
 		}
 		free(file_path);
