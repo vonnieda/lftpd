@@ -14,6 +14,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+#include "lftpd.h"
+
 #include "private/lftpd_status.h"
 #include "private/lftpd_inet.h"
 #include "private/lftpd_log.h"
@@ -28,14 +30,8 @@
 // https://en.wikipedia.org/wiki/List_of_FTP_commands
 
 typedef struct {
-	char* directory;
-	int socket;
-	int data_socket;
-} client_t;
-
-typedef struct {
 	char *command;
-	int (*handler) (client_t* client, const char* arg);
+	int (*handler) (lftpd_client_t* client, const char* arg);
 } command_t;
 
 static int cmd_cwd();
@@ -225,7 +221,7 @@ static int receive_file(int socket, const char* path) {
 	return 0;
 }
 
-static int cmd_cwd(client_t* client, const char* arg) {
+static int cmd_cwd(lftpd_client_t* client, const char* arg) {
 	if (arg == NULL || strlen(arg) == 0) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
@@ -254,7 +250,7 @@ static int cmd_cwd(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_dele(client_t* client, const char* arg) {
+static int cmd_dele(lftpd_client_t* client, const char* arg) {
 	if (arg == NULL || strlen(arg) == 0) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
@@ -283,7 +279,7 @@ static int cmd_dele(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_epsv(client_t* client, const char* arg) {
+static int cmd_epsv(lftpd_client_t* client, const char* arg) {
 	// open a data port
 	int listener_socket = lftpd_inet_listen(0);
 	if (listener_socket < 0) {
@@ -315,7 +311,7 @@ static int cmd_epsv(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_feat(client_t* client, const char* arg) {
+static int cmd_feat(lftpd_client_t* client, const char* arg) {
 	send_multiline_response_begin(client->socket, 211, STATUS_211);
 	send_multiline_response_line(client->socket, "EPSV");
 	send_multiline_response_line(client->socket, "PASV");
@@ -325,7 +321,7 @@ static int cmd_feat(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_list(client_t* client, const char* arg) {
+static int cmd_list(lftpd_client_t* client, const char* arg) {
 	if (client->data_socket == -1) {
 		send_simple_response(client->socket, 425, STATUS_425);
 		return -1;
@@ -344,7 +340,7 @@ static int cmd_list(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_nlst(client_t* client, const char* arg) {
+static int cmd_nlst(lftpd_client_t* client, const char* arg) {
 	if (client->data_socket == -1) {
 		send_simple_response(client->socket, 425, STATUS_425);
 		return -1;
@@ -363,17 +359,17 @@ static int cmd_nlst(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_noop(client_t* client, const char* arg) {
+static int cmd_noop(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 200, STATUS_200);
 	return 0;
 }
 
-static int cmd_pass(client_t* client, const char* arg) {
+static int cmd_pass(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 230, STATUS_230);
 	return 0;
 }
 
-static int cmd_pasv(client_t* client, const char* arg) {
+static int cmd_pasv(lftpd_client_t* client, const char* arg) {
 	// open a data port
 	int listener_socket = lftpd_inet_listen(0);
 	if (listener_socket < 0) {
@@ -423,17 +419,17 @@ static int cmd_pasv(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_pwd(client_t* client, const char* arg) {
+static int cmd_pwd(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 257, "\"%s\"", client->directory);
 	return 0;
 }
 
-static int cmd_quit(client_t* client, const char* arg) {
+static int cmd_quit(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 221, STATUS_221);
 	return -1;
 }
 
-static int cmd_retr(client_t* client, const char* arg) {
+static int cmd_retr(lftpd_client_t* client, const char* arg) {
 	if (client->data_socket == -1) {
 		send_simple_response(client->socket, 425, STATUS_425);
 		return -1;
@@ -455,7 +451,7 @@ static int cmd_retr(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_size(client_t* client, const char* arg) {
+static int cmd_size(lftpd_client_t* client, const char* arg) {
 	if (!arg) {
 		send_simple_response(client->socket, 550, STATUS_550);
 		return 0;
@@ -474,13 +470,12 @@ static int cmd_size(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_stor(client_t* client, const char* arg) {
+static int cmd_stor(lftpd_client_t* client, const char* arg) {
 	if (client->data_socket == -1) {
 		send_simple_response(client->socket, 425, STATUS_425);
 		return -1;
 	}
 
-	lftpd_log_info("arg %s", arg);
 	send_simple_response(client->socket, 150, STATUS_150);
 	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 	lftpd_log_debug("receive '%s'", path);
@@ -497,22 +492,22 @@ static int cmd_stor(client_t* client, const char* arg) {
 	return 0;
 }
 
-static int cmd_syst(client_t* client, const char* arg) {
+static int cmd_syst(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 215, "UNIX Type: L8");
 	return 0;
 }
 
-static int cmd_type(client_t* client, const char* arg) {
+static int cmd_type(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 200, STATUS_200);
 	return 0;
 }
 
-static int cmd_user(client_t* client, const char* arg) {
+static int cmd_user(lftpd_client_t* client, const char* arg) {
 	send_simple_response(client->socket, 230, STATUS_230);
 	return 0;
 }
 
-static int handle_control_channel(client_t* client) {
+static int handle_control_channel(lftpd_client_t* client) {
 	int err = send_simple_response(client->socket, 220, STATUS_220);
 	if (err != 0) {
 		lftpd_log_error("error sending welcome message");
@@ -582,33 +577,37 @@ static int handle_control_channel(client_t* client) {
 	return 0;
 }
 
-int lftpd_start(const char* directory, int port) {
-	int server_socket = lftpd_inet_listen(port);
-	if (server_socket < 0) {
+int lftpd_start(const char* directory, int port, lftpd_t* lftpd) {
+	memset(lftpd, 0, sizeof(lftpd_t));
+
+	lftpd->directory = directory;
+	lftpd->port = port;
+	lftpd->server_socket = lftpd_inet_listen(port);
+	if (lftpd->server_socket < 0) {
 		lftpd_log_error("error creating listener");
 		return -1;
 	}
 
 	struct sockaddr_in6 server_addr;
 	socklen_t server_addr_len = sizeof(struct sockaddr_in6);
-	int err = getsockname(server_socket, (struct sockaddr*) &server_addr, &server_addr_len);
+	int err = getsockname(lftpd->server_socket, (struct sockaddr*) &server_addr, &server_addr_len);
 	if (err != 0) {
 		lftpd_log_error("error getting server IP info");
 	}
 	else {
 		char ip[INET6_ADDRSTRLEN];
 		inet_ntop(AF_INET6, &server_addr.sin6_addr, ip, INET6_ADDRSTRLEN);
-		int port = lftpd_inet_get_socket_port(server_socket);
+		int port = lftpd_inet_get_socket_port(lftpd->server_socket);
 		lftpd_log_info("listening on [%s]:%d...", ip, port);
 	}
 
 	while (true) {
 		lftpd_log_info("waiting for connection...");
 
-		int client_socket = accept(server_socket, NULL, NULL);
+		int client_socket = accept(lftpd->server_socket, NULL, NULL);
 		if (client_socket < 0) {
 			lftpd_log_error("error accepting client socket");
-			continue;
+			break;
 		}
 
 		struct sockaddr_in6 client_addr;
@@ -625,21 +624,34 @@ int lftpd_start(const char* directory, int port) {
 			lftpd_log_info("connection received from [%s]:%d...", ip, port);
 		}
 
-		client_t client = {
+		lftpd_client_t client = {
 				.directory = strdup(directory),
 				.socket = client_socket,
 				.data_socket = -1,
 		};
+		lftpd->client = &client;
 		handle_control_channel(&client);
 		free(client.directory);
+		lftpd->client = NULL;
 	}
 
+	close(lftpd->server_socket);
+
+	return 0;
+}
+
+int lftpd_stop(lftpd_t* lftpd) {
+	close(lftpd->server_socket);
+	if (lftpd->client) {
+		close(lftpd->client->socket);
+	}
 	return 0;
 }
 
 int main( int argc, char *argv[] ) {
 	char* cwd = getcwd(NULL, 0);
-	lftpd_start(cwd, 2121);
+	lftpd_t lftpd;
+	lftpd_start(cwd, 2121, &lftpd);
 	free(cwd);
 }
 
