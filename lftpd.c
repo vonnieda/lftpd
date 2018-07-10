@@ -18,6 +18,7 @@
 #include "private/lftpd_inet.h"
 #include "private/lftpd_log.h"
 #include "private/lftpd_string.h"
+#include "private/lftpd_io.h"
 
 // https://tools.ietf.org/html/rfc959
 // https://tools.ietf.org/html/rfc2389#section-2.2
@@ -76,92 +77,6 @@ static command_t commands[] = {
 	{ NULL, NULL },
 };
 
-/**
- * @brief Given a base path and a name, attempts to combine base and
- * name and produce an absolute path. If either base or name are NULL
- * they are treated as empty strings.
- * The following rules are then applied:
- * 1. If name does not begin with / it is appended to base with
- *    / as a separator. In other words, name is treated as relative
- *    to base and the two are combined.
- * 2. The path is then broken into segments by splitting on /.
- * 3. Path segments of . are removed entirely.
- * 4. Path segments of .. are resolved by removing the parent segment.
- * 5. The segments are then joined with / and the result is returned.
- */
-// #define TESTIT(base, name, expected) printf("canonicalize_path(%s, %s) -> %s = %s\n", base, name, canonicalize_path(base, name), strcmp(canonicalize_path(base, name), expected) == 0 ? "PASS" : "FAIL")
-//	TESTIT("/", "name", "/name");
-//	TESTIT("/base", "name", "/base/name");
-//	TESTIT("/base/", "/name", "/name");
-//	TESTIT("/base//", "/name/", "/name");
-//	TESTIT("/base", ".", "/base");
-//	TESTIT("/base/", "..", "/");
-//	TESTIT("/base/base1/base2", "..", "/base/base1");
-//	TESTIT("/base/base1/", "name/name2/..", "/base/base1/name");
-//	TESTIT("/one/./two/../three/four//five/.././././..", "name", "/one/three/name");
-//	TESTIT("/", "/", "/");
-static char* canonicalize_path(const char* base, const char* name) {
-	// if either argument is null, treat it as empty
-	if (base == NULL) {
-		base = "";
-	}
-	if (name == NULL) {
-		name = "";
-	}
-
-	// if name is absolute, ignore the base and use name as the
-	// full path
-	char* path = NULL;
-	if (name[0] == '/') {
-		path = strdup(name);
-	}
-	// otherwise append name to base with / as a separator
-	else {
-		int err = asprintf(&path, "%s/%s", base, name);
-		if (err < 0) {
-			return NULL;
-		}
-	}
-
-	// allocate enough room for the absolute path, which can never be
-	// longer than the path, plus 1 for a / and 1 for the terminator
-	size_t abs_path_len = strlen(path) + 1 + 1;
-	char* abs_path = malloc(abs_path_len);
-	memset(abs_path, 0, abs_path_len);
-
-	// run through the path a segment at a time, adding each to
-	// abs_path with with a preceding / and resolving . and ..
-	char* save_pointer = NULL;
-	char* token = strtok_r(path, "/", &save_pointer);
-	while (token) {
-		if (strcmp(token, ".") == 0) {
-			// ignore it
-		}
-		else if (strcmp(token, "..") == 0) {
-			// go back one element
-			char* p = strrchr(abs_path, '/');
-			if (p != NULL) {
-				p[0] = '\0';
-			}
-		}
-		else {
-			strcat(abs_path, "/");
-			strcat(abs_path, token);
-		}
-
-		token = strtok_r(NULL, "/", &save_pointer);
-	}
-	free(path);
-
-	// a path like /test/.. might have removed everything and left
-	// an empty path, so detect that condition and fix it
-	if (strlen(abs_path) == 0) {
-		strcpy(abs_path, "/");
-	}
-
-	return abs_path;
-}
-
 static int send_response(int socket, int code, bool include_code,
 		bool multiline_start, const char* format, ...) {
 	va_list args;
@@ -216,7 +131,7 @@ static int send_list(int socket, const char* path) {
 
 	struct dirent *entry;
 	while ((entry = readdir(dp))) {
-		char* file_path = canonicalize_path(path, entry->d_name);
+		char* file_path = lftpd_io_canonicalize_path(path, entry->d_name);
 		struct stat st;
 		if (stat(file_path, &st) == 0) {
 			unsigned long long size = st.st_size;
@@ -243,7 +158,7 @@ static int send_nlst(int socket, const char* path) {
 
 	struct dirent *entry;
 	while ((entry = readdir(dp))) {
-		char* file_path = canonicalize_path(path, entry->d_name);
+		char* file_path = lftpd_io_canonicalize_path(path, entry->d_name);
 		struct stat st;
 		if (stat(file_path, &st) == 0) {
 			if (S_ISREG(st.st_mode)) {
@@ -315,7 +230,7 @@ static int cmd_cwd(client_t* client, const char* arg) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
 
-	char* path = canonicalize_path(client->directory, arg);
+	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 
 	// make sure the path exists
 	struct stat st;
@@ -344,7 +259,7 @@ static int cmd_dele(client_t* client, const char* arg) {
 		send_simple_response(client->socket, 550, STATUS_550);
 	}
 
-	char* path = canonicalize_path(client->directory, arg);
+	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 
 	// make sure the path exists
 	struct stat st;
@@ -525,7 +440,7 @@ static int cmd_retr(client_t* client, const char* arg) {
 	}
 
 	send_simple_response(client->socket, 150, STATUS_150);
-	char* path = canonicalize_path(client->directory, arg);
+	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 	lftpd_log_debug("send '%s'", path);
 	int err = send_file(client->data_socket, path);
 	free(path);
@@ -546,7 +461,7 @@ static int cmd_size(client_t* client, const char* arg) {
 		return 0;
 	}
 
-	char* path = canonicalize_path(client->directory, arg);
+	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 	lftpd_log_debug("size %s", path);
 	struct stat st;
 	if (stat(path, &st) == 0) {
@@ -567,7 +482,7 @@ static int cmd_stor(client_t* client, const char* arg) {
 
 	lftpd_log_info("arg %s", arg);
 	send_simple_response(client->socket, 150, STATUS_150);
-	char* path = canonicalize_path(client->directory, arg);
+	char* path = lftpd_io_canonicalize_path(client->directory, arg);
 	lftpd_log_debug("receive '%s'", path);
 	int err = receive_file(client->data_socket, path);
 	free(path);

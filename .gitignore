@@ -4,3 +4,4 @@ embedded-ftp-server
 .project
 .settings/language.settings.xml
 lftpd
+test_lftpd_io

@@ -31,6 +31,9 @@ and is not written with high security in mind.
 
 Try `make` to build a command line server on any POSIX like OS.
 
+# Test
+
+`make -C tests test`
 
 # Embed
 
