@@ -37,6 +37,14 @@ Try `make` to build a command line server on any POSIX like OS.
 
 # Embed
 
+```
+#include "lftpd.h"
+
+lftpd_start('/', 2121, &lftpd); // start lftpd on port 2121 serving from the / directory
+```
+
+## ESP32
+
 A `component.mk` for ESP32 is included. Just put this folder in your
 `components` directory.
  
